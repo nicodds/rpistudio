@@ -2,17 +2,13 @@ import threading
 import sys
 import signal
 import numpy as np
-import time
-from peltier import Peltier
+from time import sleep, gmtime, strftime
+from peltier import *
 #import sqlite3
 from ABE_helpers import ABEHelpers
 from ABE_ADCDifferentialPi import ADCDifferentialPi
 
 
-# Peltier class status constants
-STOPPED = 0
-HEATING = 1
-COOLING = 2
 # voltage-to-humitdy conversion parameters
 alpha  = 0.0062
 beta   = 0.16
@@ -76,20 +72,23 @@ def measure_ambient(sleep_seconds, evt):
             measuresT[i] = adc.read_voltage(chT)*100
             read = adc.read_voltage(chH)
             measuresH[i] = humidity_converter(f*read, measuresT[i])
-            time.sleep(0.1)
+            sleep(0.1)
         evt.set()
-        curtime = time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime())
+        curtime = strftime("%Y-%m-%d %H:%M:%S", gmtime())
         print("%s --- Temperature: %f +/- %f --- Relative Humidity: %f +/- %f" % (curtime, measuresT.mean(), measuresT.std(), measuresH.mean(), measuresH.std()),)
 #      c.execute("INSERT INTO humidity VALUES(?, ?, ?)", (curtime, measuresH.mean(), measuresH.std()))
  #       conn.commit()
-        time.sleep(sleep_seconds)
+        sleep(sleep_seconds)
         
 
 def control_temperature(evt):
     curr_temp = 0.0
-    delta_t   = 0.0
     
     while True:
+#        if tctrl.time_in_status() > 6.0:
+#            tctrl.stop()
+#            sys.exit(0)
+        
         # reinizialize the np array where measure samples get stored
         tmpt = np.ndarray(10)
         # wait until adc is available for measurements
@@ -100,38 +99,49 @@ def control_temperature(evt):
         for i in range(0, 10):
             tmpt[i] = adc.read_voltage(chT)*100
 #            print(">>>>> ctrl --- %f" %(tmpt[i]))
-            time.sleep(0.1)
+            sleep(0.1)
 
         #inform other threads that adc's channel is free
         evt.set()
         # at this stage, curr_temp still holds the old value, so we
         # use it to compute the temperature variation across a cycle
-        delta_t   = tmpt.mean() - curr_temp
         curr_temp = tmpt.mean()
         
-        print(">>>>> In the control cycle... temperature %f (delta: %f)" %(curr_temp, delta_t))
+        print(">>>>> In the control cycle... temperature %f" %(curr_temp))
+        status = tctrl.get_status()
+        max_relative_delta = 0.06
+        max_absolute_delta = 0.09
+        
 
-        if curr_temp >= 30.09:
-            if tctrl.get_status() != COOLING:
+        if status == HEATING:
+        # if it is heating, let it heat until opportune
+            if curr_temp >= temp+max_relative_delta:
+                tctrl.stop()
+                print("Stopping Peltier module after heating")
+        elif status == COOLING:
+        # if it is cooling, let it cools until opportune
+            if curr_temp <= temp-max_relative_delta:
+                tctrl.stop()
+                print("Stopping Peltier module after cooling")
+        elif status == STOPPED:
+        # if it is stopped
+            if curr_temp <= temp-max_absolute_delta:
+            # start heating if temperature is too low
+                tctrl.start_heatup()
+                print("Too cold! Heating up...")
+            elif curr_temp >= temp+max_absolute_delta:
+            # start cooling if temperature is too high
                 print("Too hot! Cooling down...")
                 tctrl.start_cooldown()
-        elif curr_temp <= 29.91:
-            if tctrl.get_status() != HEATING:
-                print("Too cold! Heating up...")
-                tctrl.start_heatup()
-        else:
-            if tctrl.get_status() != STOPPED:
-                print("Stopping Peltier module")
-                tctrl.stop()
 
-        time.sleep(4)
+        sleep(1)
         
         
 
 def noise(sleep_seconds):
     while True:
         print('--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--')
-        time.sleep(sleep_seconds)
+        sleep(sleep_seconds)
 
 w_sec = 30
 

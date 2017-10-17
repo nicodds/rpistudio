@@ -39,7 +39,10 @@ class Peltier(object):
             print("Set status %d on %f" %(status, self._last_change))
 
     def get_status(self):
-        return self._status 
+        return self._status
+
+    def time_in_status(self):
+        return float(time()-self._last_change)
 
     def start_heatup(self):
         if self._debug:
