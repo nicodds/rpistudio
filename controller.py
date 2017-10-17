@@ -8,9 +8,11 @@ from peltier import Peltier
 from ABE_helpers import ABEHelpers
 from ABE_ADCDifferentialPi import ADCDifferentialPi
 
-#from ADCDifferentialPi import ABE_ADCDifferentialPi
 
-
+# Peltier class status constants
+STOPPED = 0
+HEATING = 1
+COOLING = 2
 # voltage-to-humitdy conversion parameters
 alpha  = 0.0062
 beta   = 0.16
@@ -31,6 +33,15 @@ tctrl = Peltier(R_PWM, L_PWM)
 
 ev = threading.Event()
 ev.set()
+
+
+# = = = = = = = = = = = = = = = NOTES = = = = = = = = = = = = = = =
+#
+# make a measure function that takes as input a dictionary with all
+# the info needed to perform all measures and perform them on a single
+# cycle, taking care of locking or any other requirement
+
+
 
 def cleanup_pi(signal, frame):
     print("CTRL+C pressed, exiting...")
@@ -72,41 +83,44 @@ def measure_ambient(sleep_seconds, evt):
 #      c.execute("INSERT INTO humidity VALUES(?, ?, ?)", (curtime, measuresH.mean(), measuresH.std()))
  #       conn.commit()
         time.sleep(sleep_seconds)
+        
 
 def control_temperature(evt):
-    last_temp = 0.0
     curr_temp = 0.0
-    delta_t
+    delta_t   = 0.0
     
     while True:
-        # at the beginning of the while block "curr_temp" represent
-        # the last measured temperature
-        last_temp = curr_temp
         # reinizialize the np array where measure samples get stored
         tmpt = np.ndarray(10)
         # wait until adc is available for measurements
         evt.wait()
-        # inform the other threads that we are using adc's channel
+        # inform other threads that we are using adc's channel
         evt.clear()
         
         for i in range(0, 10):
             tmpt[i] = adc.read_voltage(chT)*100
 #            print(">>>>> ctrl --- %f" %(tmpt[i]))
             time.sleep(0.1)
+
+        #inform other threads that adc's channel is free
         evt.set()
+        # at this stage, curr_temp still holds the old value, so we
+        # use it to compute the temperature variation across a cycle
+        delta_t   = tmpt.mean() - curr_temp
         curr_temp = tmpt.mean()
-        print(">>>>> In the control cycle... temperature %f" %(tmpt.mean()))
+        
+        print(">>>>> In the control cycle... temperature %f (delta: %f)" %(curr_temp, delta_t))
+
         if curr_temp >= 30.09:
-            if (
-            if tctrl.get_status() != 2:
+            if tctrl.get_status() != COOLING:
                 print("Too hot! Cooling down...")
                 tctrl.start_cooldown()
-        elif tmpt.mean() <= 29.91:
-            if tctrl.get_status() != 1:
+        elif curr_temp <= 29.91:
+            if tctrl.get_status() != HEATING:
                 print("Too cold! Heating up...")
                 tctrl.start_heatup()
         else:
-            if tctrl.get_status() != 0:
+            if tctrl.get_status() != STOPPED:
                 print("Stopping Peltier module")
                 tctrl.stop()
 
