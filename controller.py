@@ -4,31 +4,30 @@ import signal
 import numpy as np
 from time import sleep, gmtime, strftime
 from peltier import *
-#import sqlite3
+import sqlite3
 from ABE_helpers import ABEHelpers
 from ABE_ADCDifferentialPi import ADCDifferentialPi
+import SDL_Pi_HDC1000
 
 
-# voltage-to-humitdy conversion parameters
-alpha  = 0.0062
-beta   = 0.16
-alphaT = 0.00216
-betaT  = 1.0546
-vin    = 4.98
-temp   = 30.0
-# voltage conversion factor on the humidity sensor
-f      = (159.47+8.998)/8.998
-# channel on the adc
-chT    = 1
-chH    = 2
+
+temp = 30.007
+# channels on the adc
+chTctrl = 1
+chTmeas = 6
+chPMT1  = 5
+chPMT2  = 7
 # gpio pins for polarity control
-R_PWM=26
-L_PWM=19
+H_PWM=26
+C_PWM=19
 # polarity controller (used for temperature manipulation)
-tctrl = Peltier(R_PWM, L_PWM)
-
-ev = threading.Event()
-ev.set()
+temperature_ctrl   = Peltier(C_PWM, H_PWM, 4.1, 2.5, 3.5)
+# setup the i2c sensor
+hdc1080 = SDL_Pi_HDC1000.SDL_Pi_HDC1000()
+# setup the ADC
+i2c_helper = ABEHelpers()
+bus        = i2c_helper.get_smbus()
+adc        = ADCDifferentialPi(bus, 0x68, 0x69, 16)
 
 
 # = = = = = = = = = = = = = = = NOTES = = = = = = = = = = = = = = =
@@ -37,119 +36,135 @@ ev.set()
 # the info needed to perform all measures and perform them on a single
 # cycle, taking care of locking or any other requirement
 
+# convert measure of PMT on channel 5
+def convert_PMT1(measures):
+    factor   = 12.735170
+    fact_err =  0.034583
 
+    measure = measures.mean()
+    error   = measures.std()
+    true_measure = factor * measure
+    true_error   = measure*fact_err + factor * error
+
+    return (true_measure, true_error)
+
+# convert measure of PMT on channel 7
+def convert_PMT2(measures):
+    factor   = 12.694516
+    fact_err =  0.033417
+
+    measure = measures.mean()
+    error   = measures.std()    
+    true_measure = factor * measure
+    true_error   = measure*fact_err + factor * error
+
+    return (true_measure, true_error)
+
+
+def calibrated_temperature(voltages):
+    intercept = 3.62227975e-02
+    pendence  = 9.11017050e+01
+    si, sp    = 0.01999287, 0.06932112
+
+    value  = intercept + voltages.mean()*pendence
+    sd_err = si + voltages.std()*pendence + sp*voltages.mean()
+
+    return (value, sd_err)
 
 def cleanup_pi(signal, frame):
     print("CTRL+C pressed, exiting...")
-    tctrl.stop()
-    tctrl.cleanup()
+    temperature_ctrl.stop()
+    temperature_ctrl.cleanup()
     sys.exit(0)
 
 signal.signal(signal.SIGINT, cleanup_pi)
 
-# function to convert an output voltage to relative humidity
-def humidity_converter(v, T):
-    rh_sensor = (v-beta*vin)/(alpha*vin)
-    rh_true   = rh_sensor/(betaT-alphaT*T)
-    return rh_true
 
-# setup the ADC
-i2c_helper = ABEHelpers()
-bus        = i2c_helper.get_smbus()
-adc        = ADCDifferentialPi(bus, 0x68, 0x69, 16)
 
-def measure_ambient(sleep_seconds, evt):
+
+def measure_ambient(sleep_seconds):
     # setup the connection to the db
-#    conn = sqlite3.connect('prova.db')
-#    c    = conn.cursor()
+    conn = sqlite3.connect('prova.db')
+    c    = conn.cursor()
+    formatted_string = """--- %s ---
+Temperature: \t%2.5f +/- %2.5f 
+Humidity: \t%2.5f +/- %2.5f
+Photo mult1: \t%2.5f +/- %2.5f
+Photo mult2: \t%2.5f +/- %2.5f
+Voltage: \t%2.5f"""
+    
+    start_time = time()
+    measures    = {'humidity': None, 'temperature': None, 'pmt1': None, 'pmt2': None}
+    repetitions = 15
 
     while True:
-        measuresH  = np.ndarray(10)
-        measuresT  = np.ndarray(10)
-        evt.wait()
-        evt.clear()
-        for i in range(0, 10):
-            measuresT[i] = adc.read_voltage(chT)*100
-            read = adc.read_voltage(chH)
-            measuresH[i] = humidity_converter(f*read, measuresT[i])
-            sleep(0.1)
-        evt.set()
-        curtime = strftime("%Y-%m-%d %H:%M:%S", gmtime())
-        print("%s --- Temperature: %f +/- %f --- Relative Humidity: %f +/- %f" % (curtime, measuresT.mean(), measuresT.std(), measuresH.mean(), measuresH.std()),)
-#      c.execute("INSERT INTO humidity VALUES(?, ?, ?)", (curtime, measuresH.mean(), measuresH.std()))
- #       conn.commit()
-        sleep(sleep_seconds)
+        secs_spent = int(time() - start_time)
         
+        for k in measures.keys():
+            measures[k]  = np.ndarray(repetitions)
+        
+        for i in range(0, repetitions):
+            for k in measures.keys():
+                if k == 'temperature':
+                    measures[k][i] = adc.read_voltage(chTmeas)
+                elif k == 'humidity':
+                    measures[k][i] = hdc1080.readHumidity()
+                elif k == 'pmt1':
+                    measures[k][i] = adc.read_voltage(chPMT1)
+                elif k == 'pmt2':
+                    measures[k][i] = adc.read_voltage(chPMT2)
+            
+            sleep(0.1)
 
-def control_temperature(evt):
+
+        curtime = strftime("%Y-%m-%d %H:%M:%S", gmtime())
+        
+        print(formatted_string %(curtime, *calibrated_temperature(measures['temperature']),
+                                 measures['humidity'].mean(), measures['humidity'].std(),
+                                 *convert_PMT1(measures['pmt1']),
+                                 *convert_PMT2(measures['pmt2']),
+                                 adc.read_voltage(8)))
+
+        c.execute("INSERT INTO experiment VALUES(NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 (secs_spent, *calibrated_temperature(measures['temperature']),
+                  measures['humidity'].mean(), measures['humidity'].std(),
+                  *convert_PMT1(measures['pmt1']),
+                  *convert_PMT2(measures['pmt2'])))
+        conn.commit()
+        sleep(sleep_seconds)
+
+                
+
+def control_temperature():
     curr_temp = 0.0
+    start_time= time()
     
     while True:
-#        if tctrl.time_in_status() > 6.0:
-#            tctrl.stop()
-#            sys.exit(0)
-        
         # reinizialize the np array where measure samples get stored
-        tmpt = np.ndarray(10)
-        # wait until adc is available for measurements
-        evt.wait()
-        # inform other threads that we are using adc's channel
-        evt.clear()
+        tmp_temperature = np.ndarray(5)
         
-        for i in range(0, 10):
-            tmpt[i] = adc.read_voltage(chT)*100
-#            print(">>>>> ctrl --- %f" %(tmpt[i]))
+        for i in range(0, 5):
+            tmp_temperature[i] = adc.read_voltage(chTctrl)
             sleep(0.1)
 
-        #inform other threads that adc's channel is free
-        evt.set()
-        # at this stage, curr_temp still holds the old value, so we
-        # use it to compute the temperature variation across a cycle
-        curr_temp = tmpt.mean()
-        
-        print(">>>>> In the control cycle... temperature %f" %(curr_temp))
-        status = tctrl.get_status()
-        max_relative_delta = 0.06
-        max_absolute_delta = 0.09
-        
-
-        if status == HEATING:
-        # if it is heating, let it heat until opportune
-            if curr_temp >= temp+max_relative_delta:
-                tctrl.stop()
-                print("Stopping Peltier module after heating")
-        elif status == COOLING:
-        # if it is cooling, let it cools until opportune
-            if curr_temp <= temp-max_relative_delta:
-                tctrl.stop()
-                print("Stopping Peltier module after cooling")
-        elif status == STOPPED:
-        # if it is stopped
-            if curr_temp <= temp-max_absolute_delta:
-            # start heating if temperature is too low
-                tctrl.start_heatup()
-                print("Too cold! Heating up...")
-            elif curr_temp >= temp+max_absolute_delta:
-            # start cooling if temperature is too high
-                print("Too hot! Cooling down...")
-                tctrl.start_cooldown()
+        curr_temp = calibrated_temperature(tmp_temperature)
+        pwm = temperature_ctrl.adjust(temp-curr_temp[0])
+        print(">>>>> In the control cycle... temperature %f (%f)" %(curr_temp))
 
         sleep(1)
-        
-        
 
-def noise(sleep_seconds):
-    while True:
-        print('--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--*--')
-        sleep(sleep_seconds)
+w_sec = 150
 
-w_sec = 30
+print("Starting program...")
+hdc1080.turnHeaterOn()
+sleep(5)
+hdc1080.turnHeaterOff()
+hdc1080.setTemperatureResolution(SDL_Pi_HDC1000.HDC1000_CONFIG_TEMPERATURE_RESOLUTION_14BIT)
+hdc1080.setHumidityResolution(SDL_Pi_HDC1000.HDC1000_CONFIG_HUMIDITY_RESOLUTION_14BIT)
 
-t1 = threading.Thread(target=measure_ambient, args=(w_sec, ev,))
-t2 = threading.Thread(target=control_temperature, args=(ev,))
+t1 = threading.Thread(target=measure_ambient, args=(w_sec,))
+t2 = threading.Thread(target=control_temperature)
 
 t1.start()
 t2.start()
-
-    
 
