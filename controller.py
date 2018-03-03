@@ -2,74 +2,36 @@ import threading
 import sys
 import signal
 import numpy as np
+import sqlite3
 from time import sleep, gmtime, strftime
 from peltier import *
-import sqlite3
-from ABE_helpers import ABEHelpers
-from ABE_ADCDifferentialPi import ADCDifferentialPi
-import SDL_Pi_HDC1000
+from sensors import *
 
+        
 
-
-temp = 30.007
+temp = 30.01
 # channels on the adc
 chTctrl = 1
 chTmeas = 6
 chPMT1  = 5
 chPMT2  = 7
 # gpio pins for polarity control
-H_PWM=26
-C_PWM=19
+HOT_PWM_GPIO  = 26
+COLD_PWM_GPIO = 19
 # polarity controller (used for temperature manipulation)
-temperature_ctrl   = Peltier(C_PWM, H_PWM, 4.1, 2.5, 3.5)
-# setup the i2c sensor
-hdc1080 = SDL_Pi_HDC1000.SDL_Pi_HDC1000()
-# setup the ADC
-i2c_helper = ABEHelpers()
-bus        = i2c_helper.get_smbus()
-adc        = ADCDifferentialPi(bus, 0x68, 0x69, 16)
+temperature_ctrl   = Peltier(COLD_PWM_GPIO,
+                             HOT_PWM_GPIO,
+                             4.1, 2.5, 3.5)
+# setup sensors
+humidity_sensor  = HumiditySensor(address=0x40, name='rh')
+temp_ctrl_sensor = TempControlSensor(channel=chTctrl, name='temp_control')
+temp_meas_sensor = TempMeasureSensor(channel=chTmeas, name='temp')
+pmt1_sensor      = Pmt1Sensor(channel=chPMT1, name='pmt1')
+pmt2_sensor      = Pmt2Sensor(channel=chPMT2, name='pmt2')
+
+sensors = [temp_meas_sensor, humidity_sensor, pmt1_sensor, pmt2_sensor]
 
 
-# = = = = = = = = = = = = = = = NOTES = = = = = = = = = = = = = = =
-#
-# make a measure function that takes as input a dictionary with all
-# the info needed to perform all measures and perform them on a single
-# cycle, taking care of locking or any other requirement
-
-# convert measure of PMT on channel 5
-def convert_PMT1(measures):
-    factor   = 12.735170
-    fact_err =  0.034583
-
-    measure = measures.mean()
-    error   = measures.std()
-    true_measure = factor * measure
-    true_error   = measure*fact_err + factor * error
-
-    return (true_measure, true_error)
-
-# convert measure of PMT on channel 7
-def convert_PMT2(measures):
-    factor   = 12.694516
-    fact_err =  0.033417
-
-    measure = measures.mean()
-    error   = measures.std()    
-    true_measure = factor * measure
-    true_error   = measure*fact_err + factor * error
-
-    return (true_measure, true_error)
-
-
-def calibrated_temperature(voltages):
-    intercept = 3.62227975e-02
-    pendence  = 9.11017050e+01
-    si, sp    = 0.01999287, 0.06932112
-
-    value  = intercept + voltages.mean()*pendence
-    sd_err = si + voltages.std()*pendence + sp*voltages.mean()
-
-    return (value, sd_err)
 
 def cleanup_pi(signal, fname):
     print("CTRL+C pressed, exiting...")
@@ -99,47 +61,40 @@ Temperature: \t%2.5f +/- %2.5f
 Humidity: \t%2.5f +/- %2.5f
 Photo mult1: \t%2.5f +/- %2.5f
 Photo mult2: \t%2.5f +/- %2.5f
-------------------------------------"""
+-----------------------------------"""
     
-    start_time   = time()
+    start_time   = time.time()
     last_measure = 0
-    measures     = {'humidity': None, 'temperature': None, 'pmt1': None, 'pmt2': None}
+    measures     = {}
     repetitions  = 15
 
     while t.is_running:
-        secs_since_measure = time() - last_measure
+        secs_since_measure = time.time() - last_measure
 
         if secs_since_measure >= sleep_seconds:
-            secs_spent = int(time() - start_time)
-            last_measure = time()
+            secs_spent = int(time.time() - start_time)
+            last_measure = time.time()
             
-            for k in measures.keys():
-                measures[k]  = np.ndarray(repetitions)
+            for sensor in sensors:
+                measures[sensor.get_name()]  = np.ndarray(repetitions)
         
             for i in range(0, repetitions):
-                for k in measures.keys():
-                    if k == 'temperature':
-                        measures[k][i] = adc.read_voltage(chTmeas)
-                    elif k == 'humidity':
-                        measures[k][i] = hdc1080.readHumidity()
-                    elif k == 'pmt1':
-                        measures[k][i] = adc.read_voltage(chPMT1)
-                    elif k == 'pmt2':
-                        measures[k][i] = adc.read_voltage(chPMT2)
-            
+                for sensor in sensors:
+                    measures[sensor.get_name()][i] = sensor.measure()
 
             curtime = strftime("%Y-%m-%d %H:%M:%S", gmtime())
         
-            print(formatted_string %(curtime, *calibrated_temperature(measures['temperature']),
-                                 measures['humidity'].mean(), measures['humidity'].std(),
-                                 *convert_PMT1(measures['pmt1']),
-                                 *convert_PMT2(measures['pmt2'])))
+            print(formatted_string %(curtime, measures['temp'].mean(), measures['temp'].std(),
+                                     measures['rh'].mean(), measures['rh'].std(),
+                                     measures['pmt1'].mean(), measures['pmt1'].std(),
+                                     measures['pmt2'].mean(), measures['pmt2'].std()))
+            
 
             c.execute("INSERT INTO experiment VALUES(NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                 (secs_spent, *calibrated_temperature(measures['temperature']),
-                  measures['humidity'].mean(), measures['humidity'].std(),
-                  *convert_PMT1(measures['pmt1']),
-                  *convert_PMT2(measures['pmt2'])))
+                 (secs_spent, measures['temp'].mean(), measures['temp'].std(),
+                  measures['rh'].mean(), measures['rh'].std(),
+                  measures['pmt1'].mean(), measures['pmt1'].std(),
+                  measures['pmt2'].mean(), measures['pmt2'].std()))
             conn.commit()
         #sleep(sleep_seconds)
 
@@ -147,39 +102,35 @@ Photo mult2: \t%2.5f +/- %2.5f
 
 def control_temperature(sleep_seconds):
     curr_temp    = 0.0
-    start_time   = time()
+    start_time   = time.time()
     t            = threading.currentThread()
     last_measure = 0
     
     while t.is_running:
-        secs_since_measure = time() - last_measure
+        secs_since_measure = time.time() - last_measure
 
         if secs_since_measure >= sleep_seconds:
-            last_measure = time()
+            last_measure = time.time()
             # reinizialize the np array where measure samples get stored
             tmp_temperature = np.ndarray(5)
         
             for i in range(0, 5):
-                tmp_temperature[i] = adc.read_voltage(chTctrl)
+                tmp_temperature[i] = temp_ctrl_sensor.measure()
 
-            curr_temp = calibrated_temperature(tmp_temperature)
-            pwm = temperature_ctrl.adjust(temp-curr_temp[0])
-            print(">>>>> In the control thread: temperature %f (%f)" %(curr_temp))
+            curr_temp = tmp_temperature.mean()
+            pwm = temperature_ctrl.adjust(temp-curr_temp)
+            print(">>>>> In the control thread: temperature %f (%f)" %(curr_temp, tmp_temperature.std()))
 
 #        sleep(sleep_seconds)
 
 ##########################################################################
 # main
-measure_wait_sec = 5
+measure_wait_sec = 150
 control_wait_sec = 1
 
 
 print("Starting program...")
-hdc1080.turnHeaterOn()
-sleep(5)
-hdc1080.turnHeaterOff()
-hdc1080.setTemperatureResolution(SDL_Pi_HDC1000.HDC1000_CONFIG_TEMPERATURE_RESOLUTION_14BIT)
-hdc1080.setHumidityResolution(SDL_Pi_HDC1000.HDC1000_CONFIG_HUMIDITY_RESOLUTION_14BIT)
+humidity_sensor.prepare_sensor()
 
 t1 = threading.Thread(name='control',
                       target=measure_ambient,
