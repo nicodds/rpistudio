@@ -1,7 +1,7 @@
 # coding: utf-8
 import RPi.GPIO as io
 from time import time
-from pid_control import PidController
+from .pid_control import PidController
 import numpy as np
 
 # available statuses

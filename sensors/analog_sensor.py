@@ -1,4 +1,4 @@
-from abstract_sensor import AbstractSensor
+from .abstract_sensor import AbstractSensor
 
 class AnalogSensor(AbstractSensor):
     adc = None

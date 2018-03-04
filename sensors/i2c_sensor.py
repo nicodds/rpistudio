@@ -1,4 +1,4 @@
-from abstract_sensor import AbstractSensor
+from .abstract_sensor import AbstractSensor
 
 class I2cSensor(AbstractSensor):
     def __init__(self, address='0x00', name='i2c_sensor', debug=False):

@@ -3,9 +3,13 @@ import sys
 import signal
 import numpy as np
 import sqlite3
-from time import sleep, gmtime, strftime
-from peltier import *
-from sensors import *
+from time import time, sleep, gmtime, strftime
+from controllers import Peltier
+from sensors import (HumiditySensor,
+                     TempControlSensor,
+                     TempMeasureSensor,
+                     Pmt1Sensor,
+                     Pmt2Sensor)
 
         
 
@@ -19,9 +23,11 @@ chPMT2  = 7
 HOT_PWM_GPIO  = 26
 COLD_PWM_GPIO = 19
 # polarity controller (used for temperature manipulation)
-temperature_ctrl   = Peltier(COLD_PWM_GPIO,
-                             HOT_PWM_GPIO,
-                             4.3, 3.5, 2.5)
+temperature_ctrl   = Peltier(cold_gpio = COLD_PWM_GPIO,
+                             hot_gpio  = HOT_PWM_GPIO,
+                             kp = 4.3,
+                             ki = 3.5,
+                             kd =2.5)
 # setup sensors
 humidity_sensor  = HumiditySensor(address=0x40, name='rh')
 temp_ctrl_sensor = TempControlSensor(channel=chTctrl, name='temp_control')
@@ -53,7 +59,7 @@ def measure_ambient(sleep_seconds):
     # function. A better exit strategy should be found
     #
     # setup the connection to the db
-    conn = sqlite3.connect('prova.db')
+    conn = sqlite3.connect('rpistudio.db')
     c    = conn.cursor()
     t    = threading.currentThread()
     formatted_string = """------- %s -------
@@ -63,17 +69,17 @@ Photo mult1: \t%2.5f +/- %2.5f
 Photo mult2: \t%2.5f +/- %2.5f
 -----------------------------------"""
     
-    start_time   = time.time()
+    start_time   = time()
     last_measure = 0
     measures     = {}
     repetitions  = 15
 
     while t.is_running:
-        secs_since_measure = time.time() - last_measure
+        secs_since_measure = time() - last_measure
 
         if secs_since_measure >= sleep_seconds:
-            secs_spent = int(time.time() - start_time)
-            last_measure = time.time()
+            secs_spent = int(time() - start_time)
+            last_measure = time()
             
             for sensor in sensors:
                 measures[sensor.get_name()]  = np.ndarray(repetitions)
@@ -102,15 +108,15 @@ Photo mult2: \t%2.5f +/- %2.5f
 
 def control_temperature(sleep_seconds):
     curr_temp    = 0.0
-    start_time   = time.time()
+    start_time   = time()
     t            = threading.currentThread()
     last_measure = 0
     
     while t.is_running:
-        secs_since_measure = time.time() - last_measure
+        secs_since_measure = time() - last_measure
 
         if secs_since_measure >= sleep_seconds:
-            last_measure = time.time()
+            last_measure = time()
             # reinizialize the np array where measure samples get stored
             tmp_temperature = np.ndarray(5)
         

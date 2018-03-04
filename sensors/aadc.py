@@ -1,5 +1,5 @@
-from ABE_helpers import ABEHelpers
-from ABE_ADCDifferentialPi import ADCDifferentialPi
+from .ABE_helpers import ABEHelpers
+from .ABE_ADCDifferentialPi import ADCDifferentialPi
 
 class AbstractADC(object):
     def __init__(self, bit=16):

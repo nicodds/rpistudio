@@ -1,7 +1,7 @@
-from aadc import AbstractADC
-from analog_sensor import AnalogSensor
-from i2c_sensor import I2cSensor
-from SDL_Pi_HDC1000 import *
+from .aadc import AbstractADC
+from .analog_sensor import AnalogSensor
+from .i2c_sensor import I2cSensor
+from .SDL_Pi_HDC1000 import *
 from time import sleep
 
 # setup the ADC
