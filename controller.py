@@ -21,7 +21,7 @@ COLD_PWM_GPIO = 19
 # polarity controller (used for temperature manipulation)
 temperature_ctrl   = Peltier(COLD_PWM_GPIO,
                              HOT_PWM_GPIO,
-                             4.1, 2.5, 3.5)
+                             4.3, 3.5, 2.5)
 # setup sensors
 humidity_sensor  = HumiditySensor(address=0x40, name='rh')
 temp_ctrl_sensor = TempControlSensor(channel=chTctrl, name='temp_control')
