@@ -27,7 +27,7 @@ temperature_ctrl   = Peltier(cold_gpio = COLD_PWM_GPIO,
                              hot_gpio  = HOT_PWM_GPIO,
                              kp = 4.3,
                              ki = 3.5,
-                             kd =2.5)
+                             kd = 2.5)
 # setup sensors
 humidity_sensor  = HumiditySensor(address=0x40, name='rh')
 temp_ctrl_sensor = TempControlSensor(channel=chTctrl, name='temp_control')
@@ -45,12 +45,29 @@ def cleanup_pi(signal, fname):
     t2.is_running = False
     temperature_ctrl.stop()
     temperature_ctrl.cleanup()
-    sleep(0.5)
+    t2.join()
+    t1.join()
+
     sys.exit(0)
 
 signal.signal(signal.SIGINT, cleanup_pi)
 
 
+def print_measures(measures):
+    formatted_string = """------- %s -------
+Temperature: \t%2.5f +/- %2.5f 
+Humidity: \t%2.5f +/- %2.5f
+Photo mult1: \t%2.5f +/- %2.5f
+Photo mult2: \t%2.5f +/- %2.5f
+-----------------------------------"""
+    
+    curtime = strftime("%Y-%m-%d %H:%M:%S", gmtime())
+        
+    print(formatted_string %(curtime, measures['temp'].mean(), measures['temp'].std(),
+                             measures['rh'].mean(), measures['rh'].std(),
+                             measures['pmt1'].mean(), measures['pmt1'].std(),
+                             measures['pmt2'].mean(), measures['pmt2'].std()))
+        
 
 
 def measure_ambient(sleep_seconds):
@@ -62,13 +79,6 @@ def measure_ambient(sleep_seconds):
     conn = sqlite3.connect('rpistudio.db')
     c    = conn.cursor()
     t    = threading.currentThread()
-    formatted_string = """------- %s -------
-Temperature: \t%2.5f +/- %2.5f 
-Humidity: \t%2.5f +/- %2.5f
-Photo mult1: \t%2.5f +/- %2.5f
-Photo mult2: \t%2.5f +/- %2.5f
------------------------------------"""
-    
     start_time   = time()
     last_measure = 0
     measures     = {}
@@ -77,38 +87,34 @@ Photo mult2: \t%2.5f +/- %2.5f
     while t.is_running:
         secs_since_measure = time() - last_measure
 
-        if secs_since_measure >= sleep_seconds:
-            secs_spent = int(time() - start_time)
-            last_measure = time()
-            
+        if secs_since_measure < sleep_seconds:
+            sleep(0.5)
+            continue 
+
+        
+        secs_spent = int(time() - start_time)
+        last_measure = time()
+        
+        for sensor in sensors:
+            measures[sensor.get_name()]  = np.ndarray(repetitions)
+        
+        for i in range(0, repetitions):
             for sensor in sensors:
-                measures[sensor.get_name()]  = np.ndarray(repetitions)
-        
-            for i in range(0, repetitions):
-                for sensor in sensors:
-                    measures[sensor.get_name()][i] = sensor.measure()
+                measures[sensor.get_name()][i] = sensor.measure()
 
-            curtime = strftime("%Y-%m-%d %H:%M:%S", gmtime())
-        
-            print(formatted_string %(curtime, measures['temp'].mean(), measures['temp'].std(),
-                                     measures['rh'].mean(), measures['rh'].std(),
-                                     measures['pmt1'].mean(), measures['pmt1'].std(),
-                                     measures['pmt2'].mean(), measures['pmt2'].std()))
-            
+        print_measures(measures)
 
-            c.execute("INSERT INTO experiment VALUES(NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                 (secs_spent, measures['temp'].mean(), measures['temp'].std(),
-                  measures['rh'].mean(), measures['rh'].std(),
-                  measures['pmt1'].mean(), measures['pmt1'].std(),
-                  measures['pmt2'].mean(), measures['pmt2'].std()))
-            conn.commit()
-        #sleep(sleep_seconds)
+        c.execute("INSERT INTO experiment VALUES(NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                  (secs_spent, measures['temp'].mean(), measures['temp'].std(),
+                   measures['rh'].mean(), measures['rh'].std(),
+                   measures['pmt1'].mean(), measures['pmt1'].std(),
+                   measures['pmt2'].mean(), measures['pmt2'].std()))
+        conn.commit()
 
                 
 
 def control_temperature(sleep_seconds):
     curr_temp    = 0.0
-    start_time   = time()
     t            = threading.currentThread()
     last_measure = 0
     
@@ -127,7 +133,6 @@ def control_temperature(sleep_seconds):
             pwm = temperature_ctrl.adjust(temp-curr_temp)
             print(">>>>> In the control thread: temperature %f (%f)" %(curr_temp, tmp_temperature.std()))
 
-#        sleep(sleep_seconds)
 
 ##########################################################################
 # main
