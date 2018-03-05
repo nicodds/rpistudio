@@ -1,8 +1,10 @@
 from .aadc import AbstractADC
+from .abstract_sensor import AbstractSensor
 from .analog_sensor import AnalogSensor
 from .i2c_sensor import I2cSensor
 from .SDL_Pi_HDC1000 import *
 from time import sleep
+import numpy as np
 
 # setup the ADC
 adc = AbstractADC()
@@ -60,6 +62,7 @@ class Pmt2Sensor(AnalogSensor):
 
 class HumiditySensor(I2cSensor):
     def __init__(self, address, name, debug=False):
+        """A class to interface to HDC1000/1080 digital humidity and temperature sensors"""
         self._address  = address
         self._name     = name
         self._debug    = debug
@@ -89,3 +92,10 @@ class HumiditySensor(I2cSensor):
     def measure_temperature(self):
         return self._instance.readTemperature()
         
+
+class RandomSensor(AbstractSensor):
+    def __init__(self):
+        self._name = 'random_sensor'
+
+    def measure(self):
+        return np.random.uniform()
