@@ -2,7 +2,7 @@ import serial
 import numpy as np
 
 class ActonSp300i(object):
-    def __init__(self, port='/dev/tty', sensor=None):
+    def __init__(self, port='/dev/tty', sensor=None, debug=False):
         """
         A class to interface to Princeton Instruments SpectraPro 300i
         Monocrhomator via serial interface, using the protocol specified
@@ -10,6 +10,7 @@ class ActonSp300i(object):
         """
         self._port   = port
         self._sensor = sensor
+        self._debug  = debug
         try:
             self._connection = serial.Serial(self._port,
                                              baudrate=9600,
@@ -17,12 +18,24 @@ class ActonSp300i(object):
                                              parity=serial.PARITY_NONE,
                                              stopbits=serial.STOPBITS_ONE,
                                              timeout=5)
-            self._connection.open()
         except serial.SerialException:
             print('Unable to find or configure a serial connection to device %s' %(self._port))
             return None
 
+
+    def _send_command(self, command):
+        # should be modified with something healtier
+        cmd_string = "%s\r" %command
+        self._connection.write(cmd_string.encode())
+        ret_string = self._connection.read_until()
+
+        return ret_string.decode().strip()
+
+    
+    def close(self):
+        self._connection.close()
         
+    
     def set_sensor(self, sensor):
         self._sensor = sensor
 
@@ -33,9 +46,13 @@ class ActonSp300i(object):
         selected wavelength. The value is a float representing the wavelength in
         nanometers. On error, the method raises a serial.SerialException.
         """
-        self._connection.write(b"?NM\r")
-        ret_str      = self._connection.read_until()
-        ret_elements = ret_str.decode().strip().split()
+        ret_str = self._send_command('?NM')
+        
+        if self._debug:
+            print(ret_str)
+            return 0.0
+            
+        ret_elements = ret_str.split()
 
         if (len(ret_elements) == 4) and (ret_elements[-1] == 'ok'):
             return float(ret_elements[1])
@@ -44,21 +61,20 @@ class ActonSp300i(object):
 
         
     def init_scan(self, wavelength):
-        self._connection.write(b"%f GOTO\n" %(float(wavelength)))
-        line = self._connection.read_until()
+        line = self._send_command('%f GOTO' %(float(wavelength)))
+        print(line)
 
         
     def move_to(self, wavelength):
         """ 
         Move the grating to the given wavelength
         """
-        self._connection.write(b"%f NM\n" %(float(wavelength)))
-        line = self._connection.read_until()
+        line = self._send_command('%f NM' %(float(wavelength)))
 
-        print(line.decode())
+        print(line)
 
-        if line.decode().strip() != 'ok':
-            raise serial.SerialException
+#        if line.decode().strip() != 'ok':
+#            raise serial.SerialException
             
 
         
