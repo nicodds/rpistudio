@@ -1,3 +1,18 @@
+# Copyright 2018 Domenico Delle Side <nico@delleside.org>
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#        http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an "AS
+#    IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+#    express or implied.  See the License for the specific language
+#    governing permissions and limitations under the License.
+
+
 from .aadc import AbstractADC
 from .abstract_sensor import AbstractSensor
 from .analog_sensor import AnalogSensor
@@ -6,8 +21,8 @@ from .SDL_Pi_HDC1000 import *
 from time import sleep
 import numpy as np
 
-# setup the ADC
-adc = AbstractADC()
+# setup the ADC using a 14 bit resolution
+adc = AbstractADC(bit=14)
 AnalogSensor.adc = adc
 
 
@@ -36,7 +51,16 @@ class TempMeasureSensor(AnalogSensor):
 
         return value
 
-    
+
+
+class RawPmtSensor(AnalogSensor):
+    def __init__(self, channel, name, debug=False):
+        AnalogSensor.__init__(self, name='pmt', channel=channel, debug=debug)
+
+    def convert(self, measure):
+        return measure
+
+
 
 class Pmt1Sensor(AnalogSensor):
     def __init__(self, channel, name, debug=False):
@@ -44,9 +68,10 @@ class Pmt1Sensor(AnalogSensor):
 
     def convert(self, measure):
         factor       = 12.735170
-        true_measure = factor * measure
+        true_measure_v = factor * measure
+        true_measure_phot_sec = 508115364.5*true_measure_v
         
-        return true_measure
+        return true_measure_phot_sec
 
     
 class Pmt2Sensor(AnalogSensor):
@@ -55,9 +80,11 @@ class Pmt2Sensor(AnalogSensor):
 
     def convert(self, measure):
         factor       = 12.694516
-        true_measure = factor * measure
+        true_measure_v = factor * measure
+        true_measure_phot_sec = 508115364.5*true_measure_v
         
-        return true_measure
+        
+        return true_measure_phot_sec
 
 
 class HumiditySensor(I2cSensor):

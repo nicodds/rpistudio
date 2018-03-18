@@ -1,3 +1,17 @@
+# Copyright 2018 Domenico Delle Side <nico@delleside.org>
+#
+#    Licensed under the Apache License, Version 2.0 (the "License");
+#    you may not use this file except in compliance with the License.
+#    You may obtain a copy of the License at
+#
+#        http://www.apache.org/licenses/LICENSE-2.0
+#
+#    Unless required by applicable law or agreed to in writing,
+#    software distributed under the License is distributed on an "AS
+#    IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+#    express or implied.  See the License for the specific language
+#    governing permissions and limitations under the License.
+
 import threading
 import sys
 import signal
@@ -10,15 +24,16 @@ from sensors import (HumiditySensor,
                      TempMeasureSensor,
                      Pmt1Sensor,
                      Pmt2Sensor)
+#from plotly_graphs import update_graphs
 
-        
 
-temp = 30.01
+
+temp = 30.015
 # channels on the adc
 chTctrl = 1
 chTmeas = 6
 chPMT1  = 5
-chPMT2  = 7
+chPMT2  = 8
 # gpio pins for polarity control
 HOT_PWM_GPIO  = 26
 COLD_PWM_GPIO = 19
@@ -47,6 +62,7 @@ def cleanup_pi(signal, fname):
     temperature_ctrl.cleanup()
     t2.join()
     t1.join()
+#    t3.cancel()
 
     sys.exit(0)
 
@@ -137,7 +153,7 @@ def control_temperature(sleep_seconds):
 ##########################################################################
 # main
 measure_wait_sec = 150
-control_wait_sec = 1
+control_wait_sec = 0.7 
 
 
 print("Starting program...")
@@ -150,9 +166,15 @@ t2 = threading.Thread(name='measure',
                       target=control_temperature,
                       args=(control_wait_sec,))
 
+
+
+#t1.daemon = True
+#t2.daemon = True
 t1.is_running = True
 t2.is_running = True
 
 t1.start()
 t2.start()
 
+
+#update_graphs(2000)
